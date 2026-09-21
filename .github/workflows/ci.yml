@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Checkout
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # 2. Prepare CI environment
+      - name: Create application environment file
+        run: cp config/app.env.example config/app.env
+
+      # 3. Syntax checks
+      - name: Check Python syntax
+        run: |
+          python3 -m py_compile validate.py
+          python3 -m py_compile failure_test.py
+          find app -name "*.py" -print0 | xargs -0 -n1 python3 -m py_compile
+
+      # 4. Docker Compose validation
+      - name: Validate Docker Compose configuration
+        run: docker compose config
+
+      # 5. Build
+      - name: Build Docker images
+        run: docker compose build
+
+      # 6. Start
+      - name: Start environment
+        run: docker compose up -d
+
+      # 7. Wait for readiness
+      - name: Wait for application readiness
+        run: |
+          set -e
+
+          for i in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:8080/ready > /tmp/ready.json; then
+              echo "Application is ready."
+              cat /tmp/ready.json
+              exit 0
+            fi
+
+            echo "Waiting for application readiness... attempt $i/30"
+            sleep 2
+          done
+
+          echo "Application did not become ready within the timeout."
+          docker compose ps
+          docker compose logs --no-color
+          exit 1
+
+      # 8. Run complete validation
+      - name: Run validation
+        run: python3 validate.py
+
+      # Always collect logs to help diagnose CI failures
+      - name: Collect Docker logs
+        if: always()
+        run: docker compose logs --no-color > docker-compose-ci.log
+
+      # 9. Upload logs when the job fails
+      - name: Upload Docker logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-compose-logs
+          path: docker-compose-ci.log
+
+      # 10. Cleanup
+      - name: Stop environment
+        if: always()
+        run: docker compose down
