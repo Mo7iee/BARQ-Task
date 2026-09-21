@@ -259,9 +259,11 @@ The CI workflow performs the following steps:
 3. **Run syntax checks** for the Python application, validation scripts, and Bash scripts.
 4. **Validate the Docker Compose configuration** with `docker compose config`.
 5. **Build** the Docker images.
-6. **Start** the complete environment with Docker Compose.
-7. **Wait for application readiness** through the `/ready` endpoint.
-8. **Run `validate.py`** to verify:
+
+6. **Scan** the application image for security vulnerabilities using Trivy. The scan checks the built application image for known HIGH and CRITICAL vulnerabilities. The workflow fails if such vulnerabilities are detected.
+7. **Start** the complete environment with Docker Compose.
+8. **Wait for application readiness** through the `/ready` endpoint.
+9. **Run `validate.py`** to verify:
 
    * Public NGINX access
    * Application endpoints
@@ -270,8 +272,8 @@ The CI workflow performs the following steps:
    * Network isolation
    * Published host ports
    * Database and Redis operations
-9. **Collect Docker logs** if the workflow encounters a failure.
-10. **Clean up** the Compose environment after the job finishes.
+10. **Collect Docker logs** if the workflow encounters a failure.
+11. **Clean up** the Compose environment after the job finishes.
 
 ### CI Configuration
 
