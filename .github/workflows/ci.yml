@@ -15,7 +15,9 @@ jobs:
 
       # 2. Prepare CI environment
       - name: Create application environment file
-        run: cp config/app.env.example config/app.env
+        run: |
+            mkdir -p config
+            cp .env.example config/app.env
 
       # 3. Syntax checks
       - name: Check Python syntax
