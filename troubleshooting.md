@@ -245,7 +245,7 @@
 - Remaining uncertainty:
      None for the port-mapping and basic NGINX backend-distribution issue tested here.
 
-## Entry — 2026-09-21 13:23 — PostgreSQL port and credentials issue
+## Entry — 2026-09-21 13:23 — PostgreSQL port issue
 
 - Symptom:
     `After correcting the NGINX port and upstream configuration, the application was reachable through NGINX, but requests that required PostgreSQL returned HTTP 503.
@@ -352,3 +352,146 @@
 
 - Remaining uncertainty:
     The PostgreSQL port issue has been resolved. The remaining issue is a PostgreSQL credential mismatch. It has not yet been determined whether the password in `config/app.env` is incorrect or whether PostgreSQL was initialized with a different password.
+
+## Entry — 2026-09-21 14:59 — PostgreSQL credentials issue
+
+- Symptom:
+    `POST /records` was returning `503 SERVICE UNAVAILABLE` with:
+
+    ```
+    {"error":"postgres_unavailable","instance_id":"app-02","service":"barq-api","version":"2.0.0"}
+    ```
+
+- Hypothesis:
+    The application might be using the wrong PostgreSQL and Redis ports inside the Docker network. The host-published ports (`15432` for PostgreSQL and `16379` for Redis) are different from the internal container ports (`5432` and `6379`).
+
+- Command or test:
+    First verified Docker service discovery from `app-01`:
+
+    ```
+    docker compose exec app-01 getent hosts postgres
+    docker compose exec app-01 getent hosts redis
+    ```
+
+    Then verified TCP connectivity:
+
+    ```
+    docker compose exec app-01 python -c "import socket; s=socket.create_connection(('postgres',5432),3); print('Postgres reachable'); s.close()"
+    docker compose exec app-01 python -c "import socket; s=socket.create_connection(('redis',6379),3); print('Redis reachable'); s.close()"
+    ```
+
+    Both hostname resolution and TCP connectivity succeeded.
+
+    The application configuration initially contained incorrect internal ports:
+
+    ```
+    DATABASE_URL=postgresql://barq_app:@postgres:5433/barq_tasks
+    REDIS_URL=redis://redis:6380/0
+    ```
+
+    The configuration was corrected to:
+
+    ```
+    DATABASE_URL=postgresql://barq_app:@postgres:5432/barq_tasks
+    REDIS_URL=redis://redis:6379/0
+    ```
+
+- Actual output:
+    After correcting the ports, `/records` still returned `503 SERVICE UNAVAILABLE`.
+
+    `/ready` also reported:
+
+    ```
+    {"dependencies":{"postgres":"unavailable","redis":"ready"},"status":"not_ready"}
+    ```
+
+    A direct PostgreSQL connection using the application's actual `DATABASE_URL` was then tested:
+
+    ```
+    docker compose exec app-01 python -c "import psycopg, os; c=psycopg.connect(os.environ['DATABASE_URL'], connect_timeout=3); print('PostgreSQL authentication successful'); c.close()"
+    ```
+
+    The result was:
+
+    ```
+    FATAL: password authentication failed for user "barq_app"
+    ```
+
+- Failed attempt and what changed your thinking:
+    Correcting the internal ports did not resolve the PostgreSQL failure. The successful TCP connection to `postgres:5432` showed that Docker DNS and network connectivity were working. The `psycopg` error specifically reported PostgreSQL authentication failure, so the investigation moved from networking to database credentials.
+
+    A mismatch was then found between the PostgreSQL password configured in `docker-compose.yml` and the password contained in the application's `.env` configuration.
+
+- Root cause:
+    There were two configuration issues:
+
+    1. The application initially used incorrect internal Docker ports:
+       PostgreSQL: `5433` instead of `5432`
+       Redis: `6380` instead of `6379`
+    2. After correcting the ports, the PostgreSQL password in `.env` did not match the configured `barq_app` credentials.
+
+- Fix:
+    Updated the application database and Redis URLs to use the Docker-internal ports:
+
+    ```
+    postgres:5432
+    redis:6379
+    ```
+
+    Then corrected the PostgreSQL password in `.env` so that it matched the configured `barq_app` credentials.
+
+    The application containers were recreated to load the updated environment:
+
+    ```
+    docker compose up -d --force-recreate app-01 app-02
+    ```
+
+- Retest evidence:
+    The application received the corrected database URL:
+
+    ```
+    postgresql://barq_app:***@postgres:5432/barq_tasks
+    ```
+
+    Direct PostgreSQL authentication succeeded:
+
+    ```
+    PostgreSQL authentication successful
+    ```
+
+    The readiness endpoint returned `200 OK`:
+
+    ```
+    {
+      "dependencies": {
+        "postgres": "ready",
+        "redis": "ready"
+      },
+      "status": "ready"
+    }
+    ```
+
+    Finally, the actual application operation succeeded:
+
+    ```
+    HTTP/1.1 201 CREATED
+    ```
+
+    The API created the record:
+
+    ```
+    {
+      "record": {
+        "id": 3,
+        "title": "postgres-auth-fixed"
+      }
+    }
+    ```
+
+    This confirms the complete path from the application through Docker service discovery, PostgreSQL connectivity and authentication, to successful database insertion.
+
+- Related commit:
+    a3eab88 fix: correct database credentials mismatch
+  
+- Remaining uncertainty:
+    No remaining PostgreSQL connectivity or authentication issue was observed after the configuration corrections. The PostgreSQL and Redis dependencies both reported ready, and `POST /records` successfully created a database record.
