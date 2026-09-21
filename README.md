@@ -306,3 +306,12 @@ The example file contains non-sensitive values suitable for the CI environment.
 
 [CI run for final commit](https://github.com/Mo7iee/BARQ-Task/actions/runs/35713799717)
 
+## Documentation
+
+| File                                       | Description                                                                                                 |
+| ------------------------------------------ | ----------------------------------------------------------------------------------------------------------- |
+| [`troubleshooting.md`](troubleshooting.md) | Investigation journal covering symptoms, hypotheses, commands, fixes, failed attempts, and verification.    |
+| [`log_analysis.md`](log_analysis.md)       | Analysis of the provided logs, including counts, correlations, timeline, and conclusions.                   |
+| [`decisions.md`](decisions.md)             | Key technical decisions, alternatives, trade-offs, assumptions, and limitations.                            |
+| [`security_review.md`](security_review.md) | Security and production-readiness review covering risks, implemented controls, and production improvements. |
+| [`AI_USAGE.md`](AI_USAGE.md)               | Disclosure of AI assistance, affected files, changes, and independent verification.                         |
