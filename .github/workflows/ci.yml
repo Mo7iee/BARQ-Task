@@ -16,8 +16,8 @@ jobs:
       # 2. Prepare CI environment
       - name: Create application environment file
         run: |
-            mkdir -p config
-            cp .env.example config/app.env
+          mkdir -p config
+          cp .env.example config/app.env
 
       # 3. Syntax checks
       - name: Check Python syntax
@@ -34,11 +34,22 @@ jobs:
       - name: Build Docker images
         run: docker compose build
 
-      # 6. Start
+      # 6. Security scan
+      - name: Scan application image with Trivy
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          image-ref: barq-assessment-app:ci
+          format: table
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+
+      # 7. Start
       - name: Start environment
         run: docker compose up -d
 
-      # 7. Wait for readiness
+      # 8. Wait for readiness
       - name: Wait for application readiness
         run: |
           set -e
@@ -59,7 +70,7 @@ jobs:
           docker compose logs --no-color
           exit 1
 
-      # 8. Run complete validation
+      # 9. Run complete validation
       - name: Run validation
         run: python3 validate.py
 
@@ -68,7 +79,7 @@ jobs:
         if: always()
         run: docker compose logs --no-color > docker-compose-ci.log
 
-      # 9. Upload logs when the job fails
+      # 10. Upload logs when the job fails
       - name: Upload Docker logs
         if: failure()
         uses: actions/upload-artifact@v4
@@ -76,7 +87,7 @@ jobs:
           name: docker-compose-logs
           path: docker-compose-ci.log
 
-      # 10. Cleanup
+      # 11. Cleanup
       - name: Stop environment
         if: always()
         run: docker compose down
