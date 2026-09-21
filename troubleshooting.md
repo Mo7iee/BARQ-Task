@@ -20,7 +20,7 @@
     45a13fb75384   barq-assessment-app-01   "python -m app.server"   19 seconds ago   Up 17 seconds (unhealthy)   8080/tcp                         app-01
     59523ec4af08   barq-assessment-app-02   "python -m app.server"   19 seconds ago   Up 17 seconds (unhealthy)   8080/tcp                         app-02
 
-Failed attempt and what changed your thinking:
+- Failed attempt and what changed your thinking:
     No failed investigative attempt yet.
 
 - Root cause:
