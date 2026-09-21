@@ -8,14 +8,15 @@ import time
 import urllib.error
 import urllib.request
 
-
 BASE_URL = os.getenv("BASE_URL", "http://127.0.0.1:8080")
 READY_TIMEOUT = int(os.getenv("READY_TIMEOUT", "30"))
 REQUEST_TIMEOUT = float(os.getenv("REQUEST_TIMEOUT", "3"))
 INSTANCE_REQUESTS = int(os.getenv("INSTANCE_REQUESTS", "10"))
-EXPECTED_PUBLIC_PORT = int(
-    os.getenv("EXPECTED_PUBLIC_PORT", "8080")
-)
+EXPECTED_PUBLIC_PORT = int(os.getenv("EXPECTED_PUBLIC_PORT", "8080"))
+
+PROJECT_NAME = os.getenv("COMPOSE_PROJECT_NAME", "barq-assessment")
+FRONTEND_NETWORK = f"{PROJECT_NAME}_frontend"
+BACKEND_NETWORK = f"{PROJECT_NAME}_backend"
 
 
 class ValidationError(Exception):
@@ -32,7 +33,6 @@ def fail_check(message):
 
 def request(method, path, payload=None):
     url = f"{BASE_URL}{path}"
-
     data = None
     headers = {}
 
@@ -48,116 +48,63 @@ def request(method, path, payload=None):
     )
 
     try:
-        with urllib.request.urlopen(
-            req,
-            timeout=REQUEST_TIMEOUT,
-        ) as response:
+        with urllib.request.urlopen(req, timeout=REQUEST_TIMEOUT) as response:
             body = response.read().decode("utf-8")
             return response.status, body
-
     except urllib.error.HTTPError as exc:
-        body = exc.read().decode(
-            "utf-8",
-            errors="replace",
-        )
+        body = exc.read().decode("utf-8", errors="replace")
         return exc.code, body
-
-    except (
-        urllib.error.URLError,
-        TimeoutError,
-        ConnectionError,
-    ) as exc:
-        raise ValidationError(
-            f"{method} {path}: connection failed: {exc}"
-        ) from exc
+    except (urllib.error.URLError, TimeoutError, ConnectionError) as exc:
+        raise ValidationError(f"{method} {path}: connection failed: {exc}") from exc
 
 
 def wait_for_ready():
     deadline = time.monotonic() + READY_TIMEOUT
-
-    print(
-        f"Waiting up to {READY_TIMEOUT}s for "
-        f"{BASE_URL}/ready ..."
-    )
+    print(f"Waiting up to {READY_TIMEOUT}s for {BASE_URL}/ready ...")
 
     while time.monotonic() < deadline:
         try:
             status, body = request("GET", "/ready")
-
             if status == 200:
                 payload = json.loads(body)
-
-                dependencies = payload.get(
-                    "dependencies",
-                    {},
-                )
-
+                dependencies = payload.get("dependencies", {})
                 if (
                     dependencies.get("postgres") == "ready"
                     and dependencies.get("redis") == "ready"
                 ):
-                    pass_check(
-                        "/ready → PostgreSQL and Redis ready"
-                    )
+                    pass_check("/ready → PostgreSQL and Redis ready")
                     return
-
-        except (
-            ValidationError,
-            json.JSONDecodeError,
-        ):
+        except (ValidationError, json.JSONDecodeError):
             pass
-
         time.sleep(1)
 
     raise ValidationError(
-        f"/ready did not report PostgreSQL and Redis "
-        f"as ready within {READY_TIMEOUT}s"
+        f"/ready did not report PostgreSQL and Redis as ready within {READY_TIMEOUT}s"
     )
 
 
 def check_basic_endpoints():
-    # /
     status, body = request("GET", "/")
-
     if status != 200:
-        raise ValidationError(
-            f"/ → expected 200, got {status}"
-        )
+        raise ValidationError(f"/ → expected 200, got {status}")
 
     payload = json.loads(body)
-
     if payload.get("service") != "barq-api":
-        raise ValidationError(
-            "/ → unexpected service name"
-        )
-
+        raise ValidationError("/ → unexpected service name")
     pass_check("/ → HTTP 200")
 
-    # /health
     status, body = request("GET", "/health")
-
     if status != 200:
-        raise ValidationError(
-            f"/health → expected 200, got {status}"
-        )
+        raise ValidationError(f"/health → expected 200, got {status}")
 
     payload = json.loads(body)
-
     if payload.get("status") != "alive":
-        raise ValidationError(
-            f"/health → unexpected status: {payload}"
-        )
-
+        raise ValidationError(f"/health → unexpected status: {payload}")
     pass_check("/health → alive")
 
-    # /ready
     status, body = request("GET", "/ready")
-
     if status != 200:
-        raise ValidationError(
-            f"/ready → expected 200, got {status}"
-        )
-
+        raise ValidationError(f"/ready → expected 200, got {status}")
     pass_check("/ready → HTTP 200")
 
 
@@ -165,245 +112,117 @@ def check_instances():
     instances = set()
 
     for _ in range(INSTANCE_REQUESTS):
-        status, body = request(
-            "GET",
-            "/instance",
-        )
-
+        status, body = request("GET", "/instance")
         if status != 200:
-            raise ValidationError(
-                f"/instance → expected 200, got {status}"
-            )
+            raise ValidationError(f"/instance → expected 200, got {status}")
 
         payload = json.loads(body)
-
         instance_id = payload.get("instance_id")
-
         if instance_id:
             instances.add(instance_id)
 
-    required = {
-        "app-01",
-        "app-02",
-    }
-
+    required = {"app-01", "app-02"}
     missing = required - instances
-
     if missing:
         raise ValidationError(
             "not all backends were observed; "
-            f"observed={sorted(instances)}, "
-            f"missing={sorted(missing)}"
+            f"observed={sorted(instances)}, missing={sorted(missing)}"
         )
 
-    pass_check(
-        "both backends observed through NGINX: "
-        f"{', '.join(sorted(instances))}"
-    )
+    pass_check(f"both backends observed through NGINX: {', '.join(sorted(instances))}")
 
 
 def check_records():
     title = f"validation-{int(time.time())}"
 
-    # Create record
-    status, body = request(
-        "POST",
-        "/records",
-        {"title": title},
-    )
-
+    status, body = request("POST", "/records", {"title": title})
     if status != 201:
-        raise ValidationError(
-            "POST /records → expected 201, "
-            f"got {status}: {body}"
-        )
+        raise ValidationError(f"POST /records → expected 201, got {status}: {body}")
 
     payload = json.loads(body)
     record = payload.get("record")
-
     if not isinstance(record, dict):
-        raise ValidationError(
-            "POST /records → response did not "
-            "contain a record"
-        )
-
+        raise ValidationError("POST /records → response did not contain a record")
     if record.get("title") != title:
-        raise ValidationError(
-            "POST /records → returned title "
-            "does not match"
-        )
+        raise ValidationError("POST /records → returned title does not match")
 
     record_id = record.get("id")
-
     if not isinstance(record_id, int):
-        raise ValidationError(
-            "POST /records → returned record "
-            "has no valid id"
-        )
+        raise ValidationError("POST /records → returned record has no valid id")
 
-    pass_check(
-        "POST /records → created PostgreSQL "
-        f"record id={record_id}"
-    )
+    pass_check(f"POST /records → created PostgreSQL record id={record_id}")
 
-    # Retrieve record
-    status, body = request(
-        "GET",
-        "/records",
-    )
-
+    status, body = request("GET", "/records")
     if status != 200:
-        raise ValidationError(
-            "GET /records → expected 200, "
-            f"got {status}"
-        )
+        raise ValidationError(f"GET /records → expected 200, got {status}")
 
     payload = json.loads(body)
     records = payload.get("records", [])
-
     matching = [
-        record
-        for record in records
-        if (
-            record.get("id") == record_id
-            and record.get("title") == title
-        )
+        item
+        for item in records
+        if item.get("id") == record_id and item.get("title") == title
     ]
-
     if not matching:
-        raise ValidationError(
-            "created record "
-            f"id={record_id} was not returned "
-            "by GET /records"
-        )
+        raise ValidationError(f"created record id={record_id} was not returned by GET /records")
 
-    pass_check(
-        "GET /records → created record "
-        f"id={record_id} persisted"
-    )
+    pass_check(f"GET /records → created record id={record_id} persisted")
 
 
 def check_counter():
-    # First request
-    status, body = request(
-        "GET",
-        "/counter",
-    )
-
+    status, body = request("GET", "/counter")
     if status != 200:
-        raise ValidationError(
-            "/counter → expected 200, "
-            f"got {status}"
-        )
+        raise ValidationError(f"/counter → expected 200, got {status}")
 
     payload = json.loads(body)
     first = payload.get("counter")
-
     if not isinstance(first, int):
-        raise ValidationError(
-            f"/counter → invalid counter value: "
-            f"{payload}"
-        )
+        raise ValidationError(f"/counter → invalid counter value: {payload}")
 
-    # Second request
-    status, body = request(
-        "GET",
-        "/counter",
-    )
-
+    status, body = request("GET", "/counter")
     if status != 200:
-        raise ValidationError(
-            "/counter second request → expected 200, "
-            f"got {status}"
-        )
+        raise ValidationError(f"/counter second request → expected 200, got {status}")
 
     payload = json.loads(body)
     second = payload.get("counter")
-
     if not isinstance(second, int):
-        raise ValidationError(
-            "/counter second request → invalid value: "
-            f"{payload}"
-        )
-
+        raise ValidationError(f"/counter second request → invalid value: {payload}")
     if second <= first:
-        raise ValidationError(
-            "Redis counter did not increment: "
-            f"{first} → {second}"
-        )
+        raise ValidationError(f"Redis counter did not increment: {first} → {second}")
 
-    pass_check(
-        "/counter → Redis counter incremented: "
-        f"{first} → {second}"
-    )
+    pass_check(f"/counter → Redis counter incremented: {first} → {second}")
 
 
 def check_published_ports():
     try:
         result = subprocess.run(
-            [
-                "docker",
-                "compose",
-                "ps",
-                "--format",
-                "json",
-            ],
+            ["docker", "compose", "ps", "--format", "json"],
             check=True,
             capture_output=True,
             text=True,
         )
-
     except subprocess.CalledProcessError as exc:
-        raise ValidationError(
-            f"docker compose ps failed: {exc}"
-        ) from exc
+        raise ValidationError(f"docker compose ps failed: {exc}") from exc
 
     services = []
-
     for line in result.stdout.splitlines():
         line = line.strip()
-
         if not line:
             continue
-
         try:
             services.append(json.loads(line))
-
         except json.JSONDecodeError as exc:
-            raise ValidationError(
-                "could not parse docker compose ps output"
-            ) from exc
+            raise ValidationError("could not parse docker compose ps output") from exc
 
-    expected = {
-        "nginx",
-        "app-01",
-        "app-02",
-        "postgres",
-        "redis",
-    }
-
-    found = {
-        service.get("Service")
-        for service in services
-    }
-
+    expected = {"nginx", "app-01", "app-02", "postgres", "redis"}
+    found = {service.get("Service") for service in services}
     missing = expected - found
-
     if missing:
-        raise ValidationError(
-            f"missing services: {sorted(missing)}"
-        )
+        raise ValidationError(f"missing services: {sorted(missing)}")
 
     for service in services:
         name = service.get("Service")
-
-        publishers = service.get(
-            "Publishers"
-        ) or []
-
-        # Docker Compose can report internal container
-        # ports with PublishedPort=0. These are NOT
-        # host-published ports.
+        publishers = service.get("Publishers") or []
         published_ports = {
             int(port.get("PublishedPort"))
             for port in publishers
@@ -417,96 +236,102 @@ def check_published_ports():
         if name == "nginx":
             if EXPECTED_PUBLIC_PORT not in published_ports:
                 raise ValidationError(
-                    "NGINX does not publish expected "
-                    f"host port {EXPECTED_PUBLIC_PORT}: "
-                    f"{publishers}"
+                    f"NGINX does not publish expected host port {EXPECTED_PUBLIC_PORT}: {publishers}"
                 )
-
-            pass_check(
-                "NGINX publishes host port "
-                f"{EXPECTED_PUBLIC_PORT}"
-            )
-
+            pass_check(f"NGINX publishes host port {EXPECTED_PUBLIC_PORT}")
         else:
             if published_ports:
                 raise ValidationError(
-                    f"{name} has published host ports: "
-                    f"{sorted(published_ports)}"
+                    f"{name} has published host ports: {sorted(published_ports)}"
                 )
+            pass_check(f"{name} has no published host ports")
 
-            pass_check(
-                f"{name} has no published host ports"
+
+def get_container_networks(container):
+    try:
+        result = subprocess.run(
+            [
+                "docker",
+                "inspect",
+                "--format",
+                "{{json .NetworkSettings.Networks}}",
+                container,
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+    except subprocess.CalledProcessError as exc:
+        raise ValidationError(f"could not inspect container {container}: {exc}") from exc
+
+    try:
+        networks = json.loads(result.stdout)
+    except json.JSONDecodeError as exc:
+        raise ValidationError(f"could not parse network information for {container}") from exc
+
+    return set(networks.keys())
+
+
+def check_network_boundaries():
+    expected_networks = {
+        "nginx": {FRONTEND_NETWORK},
+        "app-01": {FRONTEND_NETWORK, BACKEND_NETWORK},
+        "app-02": {FRONTEND_NETWORK, BACKEND_NETWORK},
+        "postgres": {BACKEND_NETWORK},
+        "redis": {BACKEND_NETWORK},
+    }
+
+    for container, expected in expected_networks.items():
+        actual = get_container_networks(container)
+        if actual != expected:
+            raise ValidationError(
+                f"{container} network boundary mismatch: "
+                f"expected={sorted(expected)}, actual={sorted(actual)}"
             )
+
+        if container == "nginx":
+            description = "frontend only"
+        elif container in {"app-01", "app-02"}:
+            description = "frontend + backend"
+        else:
+            description = "backend only"
+        pass_check(f"{container} networks: {description}")
 
 
 def run_check(name, function):
     try:
         function()
         return True
-
-    except (
-        ValidationError,
-        json.JSONDecodeError,
-        KeyError,
-        ValueError,
-    ) as exc:
-        fail_check(
-            f"{name}: {exc}"
-        )
+    except (ValidationError, json.JSONDecodeError, KeyError, ValueError) as exc:
+        fail_check(f"{name}: {exc}")
         return False
 
 
 def main():
-    print(
-        "=== BARQ Environment Validation ==="
-    )
-    print(
-        f"Target: {BASE_URL}"
-    )
+    print("=== BARQ Environment Validation ===")
+    print(f"Target: {BASE_URL}")
+    print(f"Frontend network: {FRONTEND_NETWORK}")
+    print(f"Backend network: {BACKEND_NETWORK}")
     print()
 
     checks = [
-        (
-            "readiness",
-            wait_for_ready,
-        ),
-        (
-            "basic endpoints",
-            check_basic_endpoints,
-        ),
-        (
-            "backend instances",
-            check_instances,
-        ),
-        (
-            "PostgreSQL records",
-            check_records,
-        ),
-        (
-            "Redis counter",
-            check_counter,
-        ),
-        (
-            "published ports",
-            check_published_ports,
-        ),
+        ("readiness", wait_for_ready),
+        ("basic endpoints", check_basic_endpoints),
+        ("backend instances", check_instances),
+        ("PostgreSQL records", check_records),
+        ("Redis counter", check_counter),
+        ("published ports", check_published_ports),
+        ("network boundaries", check_network_boundaries),
     ]
 
     failures = 0
-
     for name, function in checks:
-        if not run_check(
-            name,
-            function,
-        ):
+        if not run_check(name, function):
             failures += 1
 
     print()
-
     if failures:
-        print(
-            f"RESULT: FAIL ({failures} check(s) failed)"
-        )
+        print(f"RESULT: FAIL ({failures} check(s) failed)")
         return 1
 
     print("RESULT: PASS")
@@ -515,4 +340,3 @@ def main():
 
 if __name__ == "__main__":
     sys.exit(main())
-

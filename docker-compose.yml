@@ -138,7 +138,6 @@ services:
 
     networks:
       - frontend
-      - backend
 
 networks:
   frontend:
