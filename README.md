@@ -4,6 +4,15 @@
 
 ![BARQ architecture](./architecture.png)
 
+## Request Flow
+Client > NGINX localhost:8090:80 > apps  :8080 > PostgreSQL :5432 / Redis :6379
+1. The client sends an HTTP request to 127.0.0.1:8080.
+2. NGINX receives the request and load-balances it between app-01 app-02, and app-03.
+3. The selected Flask application processes the request.
+4. For database operations, the application connects to PostgreSQL using the postgres service name.
+5. For cache/counter operations, the application connects to Redis using the redis service name.
+6. The response returns through the selected application instance and NGINX to the client.
+
 ## Project Setup
 
 ### Configure environment variables
