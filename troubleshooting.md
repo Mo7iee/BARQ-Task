@@ -190,3 +190,56 @@
 
 - Remaining uncertainty: 
     This fix addresses Flask's bind address and NGINX-to-application connectivity. Other Docker networking and persistence issues identified in the starter configuration require separate investigation and verification.
+
+## Entry — 2026-09-21 12:43 — NGINX port/upstream correction
+
+- Symptom: 
+    Requests to the application through NGINX were failing.
+
+- Hypothesis:
+    There was a port mismatch between the host-to-NGINX mapping and the ports NGINX was configured to listen on and proxy to.
+
+- Command or test:
+    Inspected `docker-compose.yml` and `nginx/nginx.conf` to compare the published NGINX port, NGINX listening port, and application upstream ports.
+
+- Root cause:
+    The NGINX port configuration was inconsistent. The NGINX container listens on port `80`, while the previous host mapping used an incorrect container port. Additionally, the upstream configuration referenced an incorrect application port for `app-01`.
+
+- Fix: 
+    Updated the NGINX host mapping to forward host port `8080` to container port `80`, and corrected both application upstreams to use port `8080`:
+    ```
+    ports:
+    - "127.0.0.1:${PUBLIC_PORT:-8080}:80"
+    ```
+
+    ```
+    upstream application_pool {
+        server app-01:8080 max_fails=0;
+        server app-02:8080 max_fails=0;
+    }
+    ```
+- Retest evidence: 
+    A direct request through NGINX returned `HTTP/1.1 200 OK`. Repeated requests to the `/` endpoint were then used to verify that both application instances receive traffic:
+```
+for i in {1..10}; do
+    curl -s http://127.0.0.1:8080/
+    echo
+done
+```
+The 10 requests returned: `app-01`: 5 requests - `app-02`: 5 requests
+
+Every request returned the expected application response:
+
+```
+{
+    "message": "Welcome to BARQ Systems",
+    "service": "barq-api",
+    "version": "2.0.0"
+}
+```
+The `instance_id` field confirmed that traffic was successfully distributed across both backend instances.
+
+- Related commit: Record the actual commit hash:
+    7affbdd — fix: correct nginx port mappings
+
+- **Remaining uncertainty:** None for the port-mapping and basic NGINX backend-distribution issue tested here.
