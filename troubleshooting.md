@@ -491,7 +491,107 @@
     This confirms the complete path from the application through Docker service discovery, PostgreSQL connectivity and authentication, to successful database insertion.
 
 - Related commit:
-    a3eab88 fix: correct database credentials mismatch
+    a3eab88 — fix: correct database credentials mismatch
   
 - Remaining uncertainty:
     No remaining PostgreSQL connectivity or authentication issue was observed after the configuration corrections. The PostgreSQL and Redis dependencies both reported ready, and `POST /records` successfully created a database record.
+
+## Entry — 2026-09-21 16:40 — PostgreSQL data persistence
+
+- Symptom:
+    A created database record needed to survive application and PostgreSQL container recreation as required by the assessment.
+
+- Hypothesis:
+    PostgreSQL data may not be persisted if the live PostgreSQL data directory is mounted on an ephemeral filesystem instead of a persistent Docker volume.
+
+- Command or test:
+    Inspected the PostgreSQL volume configuration in `docker-compose.yml`.
+
+    The previous configuration used:
+
+    ```
+    volumes:
+    - postgres-data:/var/lib/postgresql/backup
+    ```
+
+    and:
+
+    ```
+    tmpfs:
+    - /var/lib/postgresql/data
+    ```
+
+    PostgreSQL stores its live database data under `/var/lib/postgresql/data`.
+
+- Actual output:
+    The named Docker volume was mounted at:
+
+    ```
+    /var/lib/postgresql/backup
+    ```
+
+    while the actual PostgreSQL data directory was mounted as:
+
+    ```
+    /var/lib/postgresql/data
+    ```
+
+    using `tmpfs`.
+
+    This meant that the live database data was stored in an ephemeral filesystem rather than the named `postgres-data` volume.
+
+- Failed attempt and what changed your thinking:
+    The initial configuration appeared to define a PostgreSQL named volume, but inspection of the mount targets showed that the volume was not attached to PostgreSQL's actual data directory.
+
+    The use of `tmpfs` on `/var/lib/postgresql/data` explained why database records did not survive PostgreSQL container recreation.
+
+    This shifted the investigation from the existence of a named volume to verifying the exact directory where PostgreSQL stores its live data.
+
+- Root cause:
+    The PostgreSQL named volume was mounted at the incorrect path:
+
+    ```
+    /var/lib/postgresql/backup
+    ```
+
+    while the actual PostgreSQL data directory:
+
+    ```
+    /var/lib/postgresql/data
+    ```
+
+    was mounted as `tmpfs`.
+
+    Therefore, PostgreSQL data was ephemeral and was lost when the PostgreSQL container was recreated.
+
+- Fix:
+    Changed the PostgreSQL volume configuration so that the named `postgres-data` volume is mounted directly at the PostgreSQL data directory:
+
+    ```
+    volumes:
+    - postgres-data:/var/lib/postgresql/data
+    - ./database/init.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    ```
+
+    The `tmpfs` mount for `/var/lib/postgresql/data` was removed.
+
+- Retest evidence:
+    Created a new record through the application and verified that it existed in PostgreSQL.
+
+    The application was then recreated together with the PostgreSQL container without deleting the named volume:
+
+    ```
+    docker compose up -d --force-recreate app-01 app-02 postgres
+    ```
+
+    PostgreSQL was queried again after the recreation and the previously created record was still present.
+
+    This confirmed that the database record survived application and PostgreSQL container recreation.
+
+- Related commit:
+    2f32d28 — fix: persist PostgreSQL data across container recreation
+
+- Remaining uncertainty:
+    The test verifies persistence across container recreation while the named Docker volume remains intact.
+
+    It does not verify recovery after deletion of the `postgres-data` volume, since deleting the volume would intentionally remove the persisted PostgreSQL data.
