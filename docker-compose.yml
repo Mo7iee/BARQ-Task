@@ -1,6 +1,7 @@
 name: barq-assessment
 
 x-app: &app
+  image: barq-assessment-app:ci
   build: .
   init: true
   restart: unless-stopped
