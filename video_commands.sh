@@ -31,3 +31,12 @@ docker compose start app-02
 
 # Test after creating 3rd instance 
 for i in {1..15}; do curl -s http://localhost:8090/instance; echo; done
+
+# NGINX Logs Commands
+grep -i "connect() failed.*Connection refused.*while connecting to upstream" logs/error.log
+grep -i "connect() failed.*Connection refused.*while connecting to upstream" logs/error.log | grep -ic "connection refused"
+
+grep -i "connection refused" logs/error.log | head -1
+grep -i "connection refused" logs/error.log | tail -1
+
+grep -i "connect() failed.*Connection refused.*while connecting to upstream" logs/error.log   | cut -d' ' -f1,2 | cut -d: -f1-2 | sort | uniq -c
