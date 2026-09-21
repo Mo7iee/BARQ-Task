@@ -1,97 +1,299 @@
-<img src="assets/barq-logo.svg" alt="BARQ Systems" width="180">
+# BARQ Internship Task
 
-# DevOps Internship Task - Starter v2
+## Application Architecture
 
-**Due date:** ____________________
+![BARQ architecture](./architecture.png)
 
-**Time window:** 4 calendar days from the invitation email date/time.
+## Project Setup
 
-Read [the task](assessment/TASK.md), then [the API contract](assessment/APPLICATION.md).
-Everyone receives this same release. The environment is intentionally broken.
-Hidden issue types and count are not disclosed. Investigate this project; do not replace it.
+### Configure environment variables
 
-## Included
+The project provides config/app.env.example as a template for the application and PostgreSQL environment variables.
 
-- Flask API, PostgreSQL, Redis, Docker and NGINX starter files.
-- Three historical logs, a question template and documentation templates.
-- App-only tests and a recorded challenge script.
-- Unimplemented validation, failure-test and backup/restore placeholders.
+Create your local environment file from the example:
+```
+cp .env.example config/app.env
+```
+Edit config/app.env and provide the required local values:
 
-Use synthetic lab accounts/data only. Supplied values are for this disposable exercise,
-never for real services. Keep the lab on your local machine; do not expose it publicly.
+config/app.env contains environment-specific values and secrets and must not be committed to Git. Only config/app.env.example is tracked as a safe template.
 
-## Before you start
+### Start the environment
 
-- Linux or WSL2, Python 3.12, Git and Docker with Compose.
-- Docker Desktop must use Linux containers. Run shell scripts in Linux/WSL.
-- Suggested capacity: 2 CPU cores, 4 GB free RAM and 3 GB free disk, plus Docker overhead.
-- Internet for first downloads and GitHub. No cloud account or paid registry required.
-- Use a machine where container names app-01, app-02, nginx, postgres and redis are unused.
-  Do not delete someone else's containers to free those names.
-- Intended public port: 8080 before the video, 8090 after the live change.
-  If either is occupied, ask the organizer for a documented workstation exception.
+Build the application image and start all services in the background:
+```
+docker compose up -d --build
+```
+This starts:
 
-## Start
+- nginx
+- app-01
+- app-02
+- app-03
+- postgres
+- redis
 
-Clone the supplied Git bundle/repository. Keep both release commits and the v2 baseline tag.
-Set your own Git name/email before making changes.
-
-From the repository root:
-
-```bash
-git status
-git log -2 --oneline
-cp .env.example .env
-docker version
-docker compose version
-docker compose -p barq-assessment up --build -d
-docker compose -p barq-assessment ps -a
-docker compose -p barq-assessment logs --no-color
+Only NGINX is exposed to the host:
+```
+127.0.0.1:8090
 ```
 
-The initial environment is not expected to pass. Record what actually happens.
-The intended URL is http://127.0.0.1:8080; do not assume the starter configuration is correct.
+### Check container status
 
-App-only checks use fake dependencies, not real SQL/Redis or Docker networking:
+Verify that all services are running and healthy:
+```
+docker compose ps
+```
+The application containers wait for PostgreSQL and Redis to become healthy before starting.
 
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-python -m pip install -r requirements.txt
-python -m unittest discover -s tests -v
+### Verify application readiness
+
+The /ready endpoint verifies connectivity to both PostgreSQL and Redis:
+```
+curl -s http://127.0.0.1:8090/ready
+```
+A successful response indicates that the application is ready to serve requests.
+
+### Test the application
+
+Test the available endpoints through NGINX:
+```
+curl -s http://127.0.0.1:8090/
+curl -s http://127.0.0.1:8090/health
+curl -s http://127.0.0.1:8090/instance
+curl -s http://127.0.0.1:8090/ready
+curl -s http://127.0.0.1:8090/records
+curl -s http://127.0.0.1:8090/counter
+```
+To verify that NGINX distributes requests between the three application instances:
+```
+for i in {1..15}; do
+    curl -s http://127.0.0.1:8090/instance
+    echo
+done
+```
+The responses should show requests being served by app-01, app-02, and app-03.
+
+### View logs
+
+View all service logs:
+```
+docker compose logs
+```
+Follow logs in real time:
+```
+docker compose logs -f
+```
+View a specific service's logs:
+```
+docker compose logs -f nginx
+docker compose logs -f app-01
+docker compose logs -f app-02
+docker compose logs -f app-03
+docker compose logs -f postgres
+docker compose logs -f redis
 ```
 
-## Your work
+### Stop the environment
 
-- Complete [assessment/TASK.md](assessment/TASK.md).
-- Implement validate.py, failure_test.py, backup.sh and restore.sh, or documented equivalents.
-  Placeholders deliberately exit 2; they are unfinished deliverables, not validation evidence.
-- Create .github/workflows/ci.yml yourself.
-- Complete the root report templates and docs/EVIDENCE_INDEX.md.
-- Add architecture.png or architecture.pdf.
-- Replace this README with copyable setup/build/run/test/failure/backup/restore/cleanup commands.
-- Commit as you work. Do not commit real secrets, backups, virtual environments or challenge state.
-
-## Recorded challenge
-
-Use the supplied video_challenge.sh unchanged. Read its code if needed; do not run it early.
-After repairing the environment, run it once, for the first time in the video working copy,
-during the continuous 12-18 minute recording. The script requires healthy services, both
-initial instances and the target network layout. Preflight failures make no runtime changes.
-
-```bash
-./video_challenge.sh
+Stop the containers without removing them:
+```
+docker compose stop
+```
+### Start the environment again
+```
+docker compose start
 ```
 
-If you deliberately changed the project name, pass --project YOUR_PROJECT.
-An organizer-approved alternate local URL can be passed with --url http://127.0.0.1:PORT.
-The script touches only matching Compose-owned lab containers/networks.
-Keep the receipt in .assessment/challenge.json for the evidence index. Do not delete the
-one-run marker to retry. A local marker is not tamper-proof; ownership is judged from evidence.
-Do not use docker compose down to reset the runtime challenge.
+### Remove the environment
 
-## Stop safely
+Remove the containers and networks while keeping the named volumes:
+```
+docker compose down
+```
+If you want to delete whole project with volumes created: 
+```
+docker compose down -v
+```
+Note that this command will remove all persistent volumes so you might lose all your data if you havent took a backup.
 
-Outside the recorded challenge, docker compose -p barq-assessment down stops this lab.
-Do not use --volumes during persistence tests. Avoid global Docker prune/cleanup commands.
-Back up anything you need before removing containers; investigate whether data actually persists.
+## Validation and Failure Scripts
+
+### validate.py
+
+validate.py is the project's automated end-to-end validation script. It verifies that the environment satisfies the required functional, networking, and isolation requirements.
+
+It checks:
+
+- NGINX public accessibility
+- Application health and readiness
+- Required application endpoints
+- Application instances are serving requests
+- PostgreSQL and Redis availability
+- PostgreSQL record operations
+- Redis counter operations
+- Expected public host port
+- Docker network isolation
+- Prohibited host port exposure
+
+Run the validation script from the project root:
+```
+python3 ./validate.py
+```
+The script prints PASS/FAIL results for its checks and exits with:
+
+- 0 when validation succeeds
+- a non-zero status when a required check fails
+
+This makes the script suitable for both local verification and CI.
+
+### failure_test.py
+
+failure_test.py verifies the application's behavior when one backend application instance becomes unavailable.
+
+The test:
+
+- Confirms that app-01, app-02, and app-03 are initially serving traffic.
+- Stops one application instance.
+- Verifies that the service remains accessible through the surviving instances.
+- Starts the stopped instance again.
+- Waits for it to become healthy.
+- Verifies that all three instances are serving traffic again.
+
+Run it with:
+```
+python3 ./failure_test.py
+```
+The final public port for the live environment is 8090. Provide the base URL explicitly when needed:
+```
+BASE_URL=http://127.0.0.1:8090
+```
+
+After starting the environment, run:
+```
+python3 ./validate.py
+python3 ./failure_test.py
+```
+Then run validation again to confirm that the environment has fully recovered:
+```
+python3 ./validate.py
+```
+The failure test is intentionally separate from validate.py: validate.py verifies the normal system state, while failure_test.py deliberately introduces a backend failure and verifies recovery.
+
+
+## Backup and Restore Scripts
+
+This project uses a named PostgreSQL volume plus simple backup and restore scripts to manage database state during the assessment.
+
+### `backup.sh` — logical PostgreSQL backup
+
+`backup.sh` creates a SQL dump of the `barq_tasks` database using `pg_dump` and writes
+it to a timestamped file in the `backups/` directory. The file is a portable logical
+backup (SQL statements) and is independent from the named volume.
+
+Quick usage:
+
+```bash
+./backup.sh
+# produces: backups/barq_tasks_YYYYMMDD_HHMMSS.sql
+```
+
+What it does:
+- Verifies the `postgres` container is running.
+- Creates `backups/` if missing.
+- Runs `pg_dump` as `barq_app` and saves the SQL file.
+- Verifies the file exists and is non-empty.
+
+Note: the backup file is not automatically uploaded or stored remotely — keep copies
+if you need off-host retention.
+
+
+### `restore.sh` — restore from a logical backup 
+
+`restore.sh` restores a database from a previously created SQL dump. The operation is destructive for the `barq_tasks` database and therefore requires an explicit confirmation.
+
+Quick usage:
+
+```bash
+./restore.sh backups/barq_tasks_YYYYMMDD_HHMMSS.sql
+# confirm with: y
+```
+
+What it does:
+- Validates the backup file exists and is non-empty.
+- Stops application containers (`app-01`, `app-02`) to avoid open DB connections.
+- Drops and recreates the `barq_tasks` database as `barq_app`.
+- Restores the SQL dump using `psql` (stdin).
+- Restarts the application containers.
+
+Example interactive output:
+
+```
+DROP DATABASE
+CREATE DATABASE
+COPY 11
+PASS: PostgreSQL restore completed.
+```
+
+This restores the database to the exact state captured by the SQL dump. Any records created after the backup will be lost after a restore.
+
+## CI / GitHub Actions
+
+The project uses **GitHub Actions** to automatically verify the Docker Compose environment on every push and pull request.
+
+### Workflow
+
+The CI workflow performs the following steps:
+
+1. **Checkout** the repository.
+2. **Prepare the CI environment** by creating `config/app.env` from the tracked `.env.example`.
+3. **Run syntax checks** for the Python application, validation scripts, and Bash scripts.
+4. **Validate the Docker Compose configuration** with `docker compose config`.
+5. **Build** the Docker images.
+6. **Start** the complete environment with Docker Compose.
+7. **Wait for application readiness** through the `/ready` endpoint.
+8. **Run `validate.py`** to verify:
+
+   * Public NGINX access
+   * Application endpoints
+   * PostgreSQL and Redis functionality
+   * Both application instances
+   * Network isolation
+   * Published host ports
+   * Database and Redis operations
+9. **Collect Docker logs** if the workflow encounters a failure.
+10. **Clean up** the Compose environment after the job finishes.
+
+### CI Configuration
+
+The workflow is located at:
+
+```text
+.github/workflows/ci.yml
+```
+
+It runs on:
+
+* Pushes
+* Pull requests
+
+The CI job fails if the application does not become ready or if `validate.py` reports a validation failure.
+
+### Environment Variables
+
+The real `config/app.env` file is intentionally excluded from Git because it may contain sensitive configuration.
+
+For CI, the workflow creates it from:
+
+```text
+.env.example
+    ↓
+config/app.env
+```
+
+The example file contains non-sensitive values suitable for the CI environment.
+
+### CI Verification Link
+
+[CI run for final commit](https://github.com/Mo7iee/BARQ-Task/actions/runs/35713799717)
+
