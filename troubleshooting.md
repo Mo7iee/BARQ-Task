@@ -220,26 +220,135 @@
     ```
 - Retest evidence: 
     A direct request through NGINX returned `HTTP/1.1 200 OK`. Repeated requests to the `/` endpoint were then used to verify that both application instances receive traffic:
-```
-for i in {1..10}; do
-    curl -s http://127.0.0.1:8080/
-    echo
-done
-```
-The 10 requests returned: `app-01`: 5 requests - `app-02`: 5 requests
+    ```
+    for i in {1..10}; do
+        curl -s http://127.0.0.1:8080/
+        echo
+    done
+    ```
+    The 10 requests returned: `app-01`: 5 requests - `app-02`: 5 requests
 
-Every request returned the expected application response:
+    Every request returned the expected application response:
 
-```
-{
-    "message": "Welcome to BARQ Systems",
-    "service": "barq-api",
-    "version": "2.0.0"
-}
-```
-The `instance_id` field confirmed that traffic was successfully distributed across both backend instances.
+    ```
+    {
+        "message": "Welcome to BARQ Systems",
+        "service": "barq-api",
+        "version": "2.0.0"
+    }
+    ```
+    The `instance_id` field confirmed that traffic was successfully distributed across both backend instances.
 
 - Related commit: Record the actual commit hash:
     7affbdd — fix: correct nginx port mappings
 
-- **Remaining uncertainty:** None for the port-mapping and basic NGINX backend-distribution issue tested here.
+- Remaining uncertainty:
+     None for the port-mapping and basic NGINX backend-distribution issue tested here.
+
+## Entry — 2026-09-21 13:23 — PostgreSQL port and credentials issue
+
+- Symptom:
+    `After correcting the NGINX port and upstream configuration, the application was reachable through NGINX, but requests that required PostgreSQL returned HTTP 503.
+    ```
+    curl -i -X POST http://127.0.0.1:8080/records \
+    -H 'Content-Type: application/json' \
+    -d '{"title":"connection-test"}'
+    ```
+    The response was:
+    ```
+    HTTP/1.1 503 SERVICE UNAVAILABLE
+
+    {"error":"postgres_unavailable","instance_id":"app-02","service":"barq-api","version":"2.0.0"}
+    ```
+`
+- Hypothesis:
+    The application may be configured with incorrect PostgreSQL and Redis ports for container-to-container communication.
+
+- Command or test:    
+    Inspected the Docker Compose service ports and application environment configuration. PostgreSQL listens on internal port `5432`, while Redis listens on internal port `6379`. The application environment was initially configured with:
+    ```
+    postgres:5433
+    redis:6380
+    ```
+    Tested service discovery from `app-01`:
+    ```
+    getent hosts postgres
+    getent hosts redis
+    ```
+    Result:
+    ```
+    172.19.0.5 postgres
+    172.19.0.4 redis
+    ```
+    Tested TCP connectivity to the actual internal service ports:
+    ```
+    python -c "import socket; s=socket.create_connection(('postgres',5432),3); print('Postgres reachable'); s.close()"
+    python -c "import socket; s=socket.create_connection(('redis',6379),3); print('Redis reachable'); s.close()"
+    ```
+    Result:
+    ```
+    Postgres reachable
+    Redis reachable
+    ```
+
+- Actual output:
+    The tests confirmed that Docker DNS and network connectivity were working, but the application endpoint still returned:
+    ```
+    HTTP/1.1 503 SERVICE UNAVAILABLE
+    {"error":"postgres_unavailable",...}
+    ```
+
+- Failed attempt and what changed your thinking:
+    The initial port mismatch was corrected by changing the application configuration to:
+    ```
+    DATABASE_URL=postgresql://barq_app:@postgres:5432/barq_tasks
+    REDIS_URL=redis://redis:6379/0
+    ```
+    The containers were recreated and the environment variables were verified inside `app-01`. However, the PostgreSQL-dependent endpoint continued to return HTTP 503. This showed that correcting the ports resolved the network-level port issue but did not resolve the PostgreSQL connection problem.
+
+- Root cause:
+    The PostgreSQL port configuration was incorrect initially and was successfully corrected. After the port correction, a direct PostgreSQL connection using the application's `DATABASE_URL` produced:
+    ```
+    psycopg.OperationalError:
+    connection failed: connection to server at "172.20.0.2", port 5432 failed:
+    FATAL: password authentication failed for user "barq_app"
+    ```
+    This confirmed that the application can reach PostgreSQL on the correct port, but PostgreSQL is rejecting the supplied credentials.
+
+- Fix: 
+    Corrected the internal service ports:
+    ```
+    postgres:5433 → postgres:5432
+    redis:6380    → redis:6379
+    ```
+
+- Retest evidence:
+    After correcting the ports:
+    ```
+    curl -i http://127.0.0.1:8080/ready
+    ```
+    returned:
+    ```
+    HTTP/1.1 503 SERVICE UNAVAILABLE
+
+    {"dependencies":{"postgres":"unavailable","redis":"ready"},
+    "instance_id":"app-01",
+    "service":"barq-api",
+    "status":"not_ready",
+    "version":"2.0.0"}
+    ```
+    This confirms:
+    ```
+    Redis:      ready
+    PostgreSQL: unavailable
+    ```
+    A direct connection using the application's `DATABASE_URL` then confirmed:
+    ```
+    password authentication failed for user "barq_app"
+    ```
+    
+- Related commit:
+    0c91e13 — fix: use internal database and redis ports
+
+- Remaining uncertainty:
+    The PostgreSQL port issue has been resolved. The remaining issue is a PostgreSQL credential mismatch. It has not yet been determined whether the password in `config/app.env` is incorrect or whether PostgreSQL was initialized with a different password.
